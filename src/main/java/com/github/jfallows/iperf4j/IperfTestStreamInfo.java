@@ -26,6 +26,7 @@ public final class IperfTestStreamInfo
 {
     int id;
     long bytes;
+    long blocks;
     int retransmits;
     int jitter;
     int errors;

@@ -24,7 +24,6 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import java.io.IOException;
 import java.net.SocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
@@ -37,7 +36,6 @@ public final class IperfServer implements AutoCloseable
 {
     private final Selector selector;
     private final ServerSocketChannel channel;
-    private final ByteBuffer readBuffer;
 
     private IperfTest test;
     private IperfControl control;
@@ -47,7 +45,6 @@ public final class IperfServer implements AutoCloseable
         this.test = new IperfTest();
         this.selector = Selector.open();
         this.channel = ServerSocketChannel.open();
-        this.readBuffer = ByteBuffer.allocateDirect(16384);
         channel.configureBlocking(false);
     }
 
@@ -112,7 +109,7 @@ public final class IperfServer implements AutoCloseable
             {
                 assert test.state != CREATE_STREAMS;
 
-                final IperfControl newControl = new IperfControl(test, child, readBuffer);
+                final IperfControl newControl = new IperfControl(test, child);
                 final SelectionKey controlKey = child.register(selector, OP_READ);
                 attach(controlKey, newControl::onReadyOps);
                 this.control = newControl;
@@ -120,7 +117,8 @@ public final class IperfServer implements AutoCloseable
             else if (test.state == CREATE_STREAMS && control.canCreateStreams())
             {
                 final IperfStream newStream = control.createStream(child);
-                final SelectionKey streamKey = child.register(selector, OP_READ);
+                final int interestOps = test.mode.interestOps();
+                final SelectionKey streamKey = child.register(selector, interestOps);
                 attach(streamKey, newStream::onReadyOps);
             }
             else

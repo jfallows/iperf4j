@@ -16,6 +16,7 @@
 package com.github.jfallows.iperf4j;
 
 import static java.nio.channels.SelectionKey.OP_READ;
+import static java.nio.channels.SelectionKey.OP_WRITE;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -27,15 +28,18 @@ public class IperfStream implements AutoCloseable
     private final IperfTestStreamInfo info;
     private final SocketChannel channel;
     private final ByteBuffer readBuffer;
+    private final ByteBuffer writeBuffer;
 
     public IperfStream(
         IperfTestStreamInfo info,
         SocketChannel channel,
-        ByteBuffer readBuffer)
+        ByteBuffer readBuffer,
+        ByteBuffer writeBuffer)
     {
         this.info = info;
         this.channel = channel;
         this.readBuffer = readBuffer;
+        this.writeBuffer = writeBuffer.duplicate().clear();
     }
 
     @Override
@@ -54,16 +58,31 @@ public class IperfStream implements AutoCloseable
     void onReadyOps(
         SelectionKey key)
     {
-        assert (key.readyOps() & OP_READ) != 0;
+        final int readyOps = key.isValid() ? key.readyOps() : 0;
 
         try
         {
-            final ByteBuffer buffer = this.readBuffer;
-            do
+            if ((readyOps & OP_READ) != 0)
             {
-                buffer.clear();
-                info.bytes += Math.max(channel.read(buffer), 0L);
-            } while (!buffer.hasRemaining());
+                final ByteBuffer buffer = this.readBuffer;
+                do
+                {
+                    buffer.clear();
+                    info.bytes += Math.max(channel.read(buffer), 0L);
+                } while (!buffer.hasRemaining());
+            }
+
+            if ((readyOps & OP_WRITE) != 0)
+            {
+                final ByteBuffer buffer = this.writeBuffer;
+                info.bytes += channel.write(buffer);
+
+                if (!buffer.hasRemaining())
+                {
+                    buffer.clear();
+                    info.blocks++;
+                }
+            }
         }
         catch (IOException ex)
         {

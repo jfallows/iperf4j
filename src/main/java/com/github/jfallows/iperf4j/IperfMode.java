@@ -15,16 +15,25 @@
  */
 package com.github.jfallows.iperf4j;
 
-import static com.github.jfallows.iperf4j.IperfState.IPERF_START;
+import static java.nio.channels.SelectionKey.OP_READ;
+import static java.nio.channels.SelectionKey.OP_WRITE;
 
-public final class IperfTest
+public enum IperfMode
 {
-    final IperfTestInfo info = new IperfTestInfo();
+    FORWARD(OP_READ),
+    REVERSE(OP_WRITE),
+    BIDIRECTIONAL(OP_READ | OP_WRITE);
 
-    volatile IperfState state = IPERF_START;
+    private final int interestOps;
 
-    String cookie;
-    String protocol;
-    IperfMode mode;
-    int streams;
+    public int interestOps()
+    {
+        return interestOps;
+    }
+
+    IperfMode(
+        int interestOps)
+    {
+        this.interestOps = interestOps;
+    }
 }

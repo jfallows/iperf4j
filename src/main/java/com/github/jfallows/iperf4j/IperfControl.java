@@ -15,6 +15,9 @@
  */
 package com.github.jfallows.iperf4j;
 
+import static com.github.jfallows.iperf4j.IperfMode.BIDIRECTIONAL;
+import static com.github.jfallows.iperf4j.IperfMode.FORWARD;
+import static com.github.jfallows.iperf4j.IperfMode.REVERSE;
 import static com.github.jfallows.iperf4j.IperfState.CLIENT_TERMINATE;
 import static com.github.jfallows.iperf4j.IperfState.CREATE_STREAMS;
 import static com.github.jfallows.iperf4j.IperfState.DISPLAY_RESULTS;
@@ -44,19 +47,19 @@ public class IperfControl implements AutoCloseable
 
     private final IperfTest test;
     private final SocketChannel channel;
-    private final ByteBuffer readBuffer;
-    private final ByteBuffer writeBuffer;
+    private final ByteBuffer controlBuffer;
     private final Set<IperfStream> streams;
+
+    private ByteBuffer readBuffer;
+    private ByteBuffer writeBuffer;
 
     public IperfControl(
         IperfTest test,
-        SocketChannel channel,
-        ByteBuffer readBuffer)
+        SocketChannel channel)
     {
         this.test = test;
         this.channel = channel;
-        this.readBuffer = readBuffer;
-        this.writeBuffer = ByteBuffer.allocateDirect(32768);
+        this.controlBuffer = ByteBuffer.allocateDirect(32768);
         this.streams = new LinkedHashSet<>();
     }
 
@@ -65,7 +68,7 @@ public class IperfControl implements AutoCloseable
     {
         final IperfTestStreamInfo newStreamInfo = new IperfTestStreamInfo();
         newStreamInfo.id = streams.isEmpty() ? 1 : streams.size() + 2;
-        final IperfStream newStream = new IperfStream(newStreamInfo, child, readBuffer);
+        final IperfStream newStream = new IperfStream(newStreamInfo, child, readBuffer, writeBuffer);
         streams.add(newStream);
         test.info.streams.add(newStreamInfo);
 
@@ -124,7 +127,10 @@ public class IperfControl implements AutoCloseable
         case TEST_START:
             break;
         case TEST_END:
-            streams.forEach(IperfStream::close);
+            if (test.mode == FORWARD)
+            {
+                streams.forEach(IperfStream::close);
+            }
             doChangeState(EXCHANGE_RESULTS);
             break;
         case IPERF_DONE:
@@ -188,6 +194,33 @@ public class IperfControl implements AutoCloseable
             test.streams = parallel.getAsInt();
         }
 
+        final JsonElement bidirectional = params.get("bidirectional");
+        final JsonElement reverse = params.get("reverse");
+        if (bidirectional != null && bidirectional.getAsBoolean())
+        {
+            test.mode = BIDIRECTIONAL;
+        }
+        else if (reverse != null && reverse.getAsBoolean())
+        {
+            test.mode = REVERSE;
+        }
+        else
+        {
+            test.mode = FORWARD;
+        }
+
+        final JsonElement len = params.get("len");
+        if (len != null)
+        {
+            readBuffer = ByteBuffer.allocateDirect(len.getAsInt());
+            writeBuffer = ByteBuffer.allocateDirect(len.getAsInt()).asReadOnlyBuffer();
+        }
+        else
+        {
+            readBuffer = ByteBuffer.allocateDirect(128 * 1024); // 128K
+            writeBuffer = ByteBuffer.allocateDirect(128 * 1024).asReadOnlyBuffer(); // 128K
+        }
+
         // TODO: other params
         test.info.senderHasRetransmits = -1;
     }
@@ -204,21 +237,21 @@ public class IperfControl implements AutoCloseable
 
         byte[] newResultsBytes = newResultsUTF8.getBytes(UTF_8);
 
-        writeBuffer.clear();
-        writeBuffer.putInt(newResultsBytes.length);
-        writeBuffer.put(newResultsBytes);
-        writeBuffer.flip();
-        doWriteBytes(writeBuffer);
+        controlBuffer.clear();
+        controlBuffer.putInt(newResultsBytes.length);
+        controlBuffer.put(newResultsBytes);
+        controlBuffer.flip();
+        doWriteBytes(controlBuffer);
     }
 
     private void doChangeState(
         IperfState state)
     {
-        writeBuffer.clear();
-        writeBuffer.put(state.value());
-        writeBuffer.flip();
+        controlBuffer.clear();
+        controlBuffer.put(state.value());
+        controlBuffer.flip();
 
-        doWriteBytes(writeBuffer);
+        doWriteBytes(controlBuffer);
 
         test.state = state;
     }
@@ -228,27 +261,27 @@ public class IperfControl implements AutoCloseable
     {
         try
         {
-            readBuffer.clear();
-            readBuffer.limit(nbytes);
+            controlBuffer.clear();
+            controlBuffer.limit(nbytes);
 
-            while (channel.read(readBuffer) != -1 && readBuffer.hasRemaining())
+            while (channel.read(controlBuffer) != -1 && controlBuffer.hasRemaining())
             {
                 Thread.onSpinWait();
             }
 
             // TODO: handle channel close
 
-            readBuffer.flip();
+            controlBuffer.flip();
 
-            return readBuffer;
+            return controlBuffer;
         }
         catch (IOException ex)
         {
-            readBuffer.clear();
-            readBuffer.limit(1);
-            readBuffer.put(CLIENT_TERMINATE.value());
-            readBuffer.flip();
-            return readBuffer;
+            controlBuffer.clear();
+            controlBuffer.limit(1);
+            controlBuffer.put(CLIENT_TERMINATE.value());
+            controlBuffer.flip();
+            return controlBuffer;
         }
     }
 
